@@ -1,0 +1,9 @@
+/target
+/target-wip
+# Never commit keys or local settings.
+*.key
+*.psk
+config.sh
+.env
+.env.*
+.DS_Store

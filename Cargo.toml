@@ -1,0 +1,20 @@
+[package]
+name = "keyboard-follows-mouse"
+version = "0.1.0"
+edition = "2024"
+description = "Non-Logitech keyboard input follows a Logitech Flow / Easy-Switch mouse from a Mac to a Windows PC (unofficial)"
+license = "MIT"
+repository = "https://github.com/shohey4/keyboard-follows-mouse"
+readme = "README.md"
+publish = false
+
+[dependencies]
+chacha20poly1305 = "0.10"
+getrandom = "0.2"
+serde_json = "1"
+
+[dev-dependencies]
+libc = "0.2"
+
+[target."cfg(unix)".dependencies]
+libc = "0.2"

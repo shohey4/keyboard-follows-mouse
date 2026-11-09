@@ -1,0 +1,32 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: rustup toolchain install stable --profile minimal --component clippy && rustup default stable
+      - name: Build
+        run: cargo build --release --locked
+      - name: Test
+        # tests/uds_spike.rs asserts latency bounds that shared runners may miss;
+        # it runs below as informational only. The e2e tests are Unix-only.
+        run: cargo test --release --locked --lib --bins --test e2e_binaries_udp --test e2e_synthetic
+      - name: Latency spike (informational)
+        if: runner.os != 'Windows'
+        continue-on-error: true
+        run: cargo test --release --locked --test uds_spike
+      - name: Clippy
+        run: cargo clippy --release --locked --all-targets -- -D warnings

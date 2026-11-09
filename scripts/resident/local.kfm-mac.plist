@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>local.kfm-mac</string>
+  <key>ProgramArguments</key><array>
+    <string>/bin/sh</string><string>@HOME@/Library/Application Support/keyboard-follows-mouse/bin/kfm-mac-run.sh</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <!-- Restart after a crash, a failed start (network not up yet) or K6; not after a clean stop. -->
+  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+  <key>ThrottleInterval</key><integer>10</integer>
+  <!-- Keystrokes: do not let the scheduler treat it as background work. -->
+  <key>ProcessType</key><string>Interactive</string>
+  <key>ExitTimeOut</key><integer>5</integer>
+</dict></plist>
