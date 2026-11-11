@@ -65,7 +65,7 @@ const TAG: &str = "kfm";
 const MAX_DATAGRAM: usize = 256;
 
 /// Karabiner `key_code` -> HID usage. F13 is the switch key and is not here.
-const KEY_CODES: &[(&str, u16)] = &[
+pub const KEY_CODES: &[(&str, u16)] = &[
     ("a", 0x04), ("b", 0x05), ("c", 0x06), ("d", 0x07), ("e", 0x08), ("f", 0x09), ("g", 0x0A),
     ("h", 0x0B), ("i", 0x0C), ("j", 0x0D), ("k", 0x0E), ("l", 0x0F), ("m", 0x10), ("n", 0x11),
     ("o", 0x12), ("p", 0x13), ("q", 0x14), ("r", 0x15), ("s", 0x16), ("t", 0x17), ("u", 0x18),
@@ -115,21 +115,27 @@ fn command(payload: Value, endpoint: Option<&str>) -> Value {
 /// One complex_modifications rule. It must be placed first (top priority) so
 /// that, while route = 1, no other rule handles Rainy75 keys first.
 pub fn rule(endpoint: Option<&str>) -> Value {
+    rule_with_hotkey(endpoint, &crate::remap::key_config().hotkey)
+}
+
+/// `rule` for an explicit hotkey (a validated `remap::KeyConfig::hotkey`). A
+/// hotkey that is one of the forwarded keys is not forwarded.
+pub fn rule_with_hotkey(endpoint: Option<&str>, hotkey: &str) -> Value {
     let mut manipulators = vec![
         json!({
             "type": "basic",
-            "from": {"key_code": "f13", "modifiers": {"optional": ["any"]}},
+            "from": {"key_code": hotkey, "modifiers": {"optional": ["any"]}},
             "conditions": [rainy75_only(), route(true)],
             "to": [{"set_variable": {"name": ROUTE_VAR, "value": 0}}, command(json!({TAG: 1, "e": "escape"}), endpoint)],
         }),
         json!({
             "type": "basic",
-            "from": {"key_code": "f13", "modifiers": {"optional": ["any"]}},
+            "from": {"key_code": hotkey, "modifiers": {"optional": ["any"]}},
             "conditions": [rainy75_only(), route(false)],
             "to": [command(json!({TAG: 1, "e": "toggle"}), endpoint)],
         }),
     ];
-    for (name, _) in KEY_CODES {
+    for (name, _) in KEY_CODES.iter().filter(|(n, _)| *n != hotkey) {
         manipulators.push(json!({
             "type": "basic",
             "from": {"key_code": name, "modifiers": {"optional": ["any"]}},
@@ -376,6 +382,19 @@ mod tests {
             return to.iter().find_map(|t| t.get("send_user_command")).map(|c| Sim::Command(c["payload"].clone())).unwrap_or(Sim::Mac);
         }
         Sim::Mac
+    }
+
+    #[test]
+    fn a_configured_hotkey_switches_and_is_not_forwarded() {
+        let r = rule_with_hotkey(None, "f15");
+        assert!(matches!(simulate(&r, RAINY75_VENDOR_ID, RAINY75_PRODUCT_ID, "f15", true, Some(1)), Sim::Command(_)));
+        let froms: Vec<&str> = r["manipulators"].as_array().unwrap().iter().filter_map(|m| m["from"]["key_code"].as_str()).collect();
+        assert_eq!(froms.iter().filter(|f| **f == "f15").count(), 2, "only the two switch manipulators");
+        assert!(!froms.contains(&"f13"), "the default hotkey is gone");
+        assert_eq!(froms.len(), KEY_CODES.len() + 2);
+        // The default rule still has F13 and every forwarded key.
+        let d = rule_with_hotkey(None, "f13");
+        assert_eq!(d["manipulators"].as_array().unwrap().len(), KEY_CODES.len() + 2);
     }
 
     #[test]

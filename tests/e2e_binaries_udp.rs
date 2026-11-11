@@ -1,5 +1,5 @@
-//! Stage 6 rehearsal on this Mac only: the real kfm-mac and kfm-win binaries
-//! over UDP on 127.0.0.1 with a pre-shared key file. kfm-win stays in dry-run
+//! Stage 6 rehearsal on this Mac only: the real kfm-mac and kfm-receive binaries
+//! over UDP on 127.0.0.1 with a pre-shared key file. kfm-receive stays in dry-run
 //! (counts, never injects); nothing leaves the loopback interface.
 #![cfg(unix)]
 
@@ -31,7 +31,7 @@ fn out(c: Child) -> String {
     String::from_utf8_lossy(&o.stdout).into_owned()
 }
 
-/// Runs kfm-win (dry-run) with `win_key` and kfm-mac with `mac_key`, sends the
+/// Runs kfm-receive (dry-run) with `win_key` and kfm-mac with `mac_key`, sends the
 /// synthetic script, and returns (mac stdout, win stdout).
 fn run(tag: &str, same_key: bool) -> (String, String) {
     let d = dir(tag);
@@ -41,7 +41,7 @@ fn run(tag: &str, same_key: bool) -> (String, String) {
     let (wp, mp) = (free_port(), free_port());
     let (win_addr, mac_addr) = (format!("127.0.0.1:{wp}"), format!("127.0.0.1:{mp}"));
     let win_key = if same_key { &k1 } else { &k2 };
-    let win = spawn(env!("CARGO_BIN_EXE_kfm-win"), &["--bind", &win_addr, "--peer", &mac_addr, "--key-file", win_key.to_str().unwrap(), "--seconds", "3"]);
+    let win = spawn(env!("CARGO_BIN_EXE_kfm-receive"), &["--bind", &win_addr, "--peer", &mac_addr, "--key-file", win_key.to_str().unwrap(), "--seconds", "3"]);
     let sock_dir = d.join("s");
     let mac = spawn(env!("CARGO_BIN_EXE_kfm-mac"), &["run", "--socket-dir", sock_dir.to_str().unwrap(), "--peer", &win_addr, "--bind", &mac_addr, "--key-file", k1.to_str().unwrap(), "--enable-send"]);
     let sock = sock_dir.join("user_command_receiver.sock");
@@ -187,10 +187,10 @@ fn k6_socket_replaced_returns_to_the_mac_and_stops() {
     let _ = std::fs::remove_dir_all(&d);
 }
 
-/// kfm-win `--stop-file`: refuses to start if the file exists; stops (releasing
+/// kfm-receive `--stop-file`: refuses to start if the file exists; stops (releasing
 /// keys, printing the final line) once it appears.
 #[test]
-fn kfm_win_stops_when_the_stop_file_appears() {
+fn kfm_receive_stops_when_the_stop_file_appears() {
     let d = dir("stopfile");
     let k = d.join("k");
     keygen(&k);
@@ -199,16 +199,16 @@ fn kfm_win_stops_when_the_stop_file_appears() {
     let args = ["--bind", &format!("127.0.0.1:{wp}"), "--peer", &format!("127.0.0.1:{mp}"), "--key-file", k.to_str().unwrap(), "--stop-file", stop.to_str().unwrap()].map(String::from);
     let a: Vec<&str> = args.iter().map(String::as_str).collect();
     std::fs::write(&stop, b"").unwrap();
-    let o = Command::new(env!("CARGO_BIN_EXE_kfm-win")).args(&a).output().unwrap();
+    let o = Command::new(env!("CARGO_BIN_EXE_kfm-receive")).args(&a).output().unwrap();
     assert!(!o.status.success() && String::from_utf8_lossy(&o.stderr).contains("already exists"), "{o:?}");
     std::fs::remove_file(&stop).unwrap();
-    let mut child = spawn(env!("CARGO_BIN_EXE_kfm-win"), &a);
+    let mut child = spawn(env!("CARGO_BIN_EXE_kfm-receive"), &a);
     std::thread::sleep(Duration::from_millis(500));
     assert!(child.try_wait().unwrap().is_none(), "still running without the file");
     std::fs::write(&stop, b"").unwrap();
     let t = Instant::now();
     while child.try_wait().unwrap().is_none() {
-        if t.elapsed() > Duration::from_secs(3) { let _ = child.kill(); panic!("kfm-win ignored the stop file"); }
+        if t.elapsed() > Duration::from_secs(3) { let _ = child.kill(); panic!("kfm-receive ignored the stop file"); }
         std::thread::sleep(Duration::from_millis(20));
     }
     let o = out(child);
@@ -263,7 +263,7 @@ fn long_hold_falls_back_to_the_mac() {
     keygen(&k);
     let (wp, mp) = (free_port(), free_port());
     let (win_addr, mac_addr) = (format!("127.0.0.1:{wp}"), format!("127.0.0.1:{mp}"));
-    let mut win = spawn(env!("CARGO_BIN_EXE_kfm-win"), &["--bind", &win_addr, "--peer", &mac_addr, "--key-file", k.to_str().unwrap()]);
+    let mut win = spawn(env!("CARGO_BIN_EXE_kfm-receive"), &["--bind", &win_addr, "--peer", &mac_addr, "--key-file", k.to_str().unwrap()]);
     let sockdir = d.join("s");
     let mut mac = spawn(env!("CARGO_BIN_EXE_kfm-mac"), &["run", "--socket-dir", sockdir.to_str().unwrap(), "--peer", &win_addr, "--bind", &mac_addr, "--key-file", k.to_str().unwrap(), "--enable-send", "--hold-fallback-ms", "600"]);
     let sock = sockdir.join("user_command_receiver.sock");
@@ -308,7 +308,7 @@ fn resident_clears_only_a_stale_socket() {
     let _ = std::fs::remove_dir_all(&d);
 }
 
-/// Rule E over UDP: kfm-win reports the MX4 (a stand-in file off Windows) and
+/// Rule E over UDP: kfm-receive reports the MX4 (a stand-in file off Windows) and
 /// kfm-mac logs each arrival / departure once; one already there at start is
 /// not an arrival. Not following, so it only says what it would do.
 #[test]
@@ -319,7 +319,7 @@ fn mx4_arrivals_and_departures_reach_the_mac() {
     std::fs::write(&mx4, b"").unwrap(); // connected to Windows at start
     let (wp, mp) = (free_port(), free_port());
     let (win_addr, mac_addr) = (format!("127.0.0.1:{wp}"), format!("127.0.0.1:{mp}"));
-    let win = Command::new(env!("CARGO_BIN_EXE_kfm-win")).args(["--bind", &win_addr, "--peer", &mac_addr, "--key-file", k.to_str().unwrap(), "--seconds", "5"])
+    let win = Command::new(env!("CARGO_BIN_EXE_kfm-receive")).args(["--bind", &win_addr, "--peer", &mac_addr, "--key-file", k.to_str().unwrap(), "--seconds", "5", "--mx4-id", "test-mouse"])
         .env("KFM_TEST_MX4_FILE", &mx4).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
     let sockdir = d.join("s");
     let mut mac = spawn(env!("CARGO_BIN_EXE_kfm-mac"), &["run", "--socket-dir", sockdir.to_str().unwrap(), "--peer", &win_addr, "--bind", &mac_addr, "--key-file", k.to_str().unwrap(), "--enable-send"]);
@@ -339,6 +339,45 @@ fn mx4_arrivals_and_departures_reach_the_mac() {
     assert!(lines[1].ends_with("arrived 1, left 0, now present: WOULD SWITCH to Windows"), "{m}");
     assert!(m.contains("MX4 on Windows: arrived 1, left 1"), "{m}");
     assert!(!m.contains("destination: Windows"), "not following: nothing moves\n{m}");
-    assert!(w.contains("MX4 watch: raw-input mouse whose device path contains \"vid&02046d_pid&b042\", every 200 ms (now present)"), "{w}");
+    assert!(w.contains("MX4 watch: raw-input mouse whose device path contains \"test-mouse\", every 200 ms (now present)"), "{w}");
     assert!(w.contains("mx4 arrived 1, left 1"), "{w}");
+}
+
+/// Invalid layout or key configuration fails closed before anything listens.
+#[test]
+fn invalid_layout_and_keymap_fail_closed() {
+    let d = std::env::temp_dir().join(format!("kfm-cfg-{}", std::process::id()));
+    std::fs::create_dir_all(&d).unwrap();
+    let k = d.join("k");
+    keygen(&k);
+    let port = free_port();
+    let base = ["--bind", "127.0.0.1:0", "--peer", &format!("127.0.0.1:{port}"), "--key-file", k.to_str().unwrap(), "--seconds", "1"];
+    for (extra, want) in [(vec!["--flow-edge", "diagonal"], "--flow-edge"), (vec!["--flow-display", "99"], "--flow-display")] {
+        let o = Command::new(env!("CARGO_BIN_EXE_kfm-receive")).args(base).args(&extra).output().unwrap();
+        assert!(!o.status.success() && String::from_utf8_lossy(&o.stderr).contains(want), "{extra:?}: {}", String::from_utf8_lossy(&o.stderr));
+    }
+    let o = Command::new(env!("CARGO_BIN_EXE_kfm-receive")).args(base).args(["--flow-edge", "top"]).output().unwrap();
+    assert!(o.status.success() && String::from_utf8_lossy(&o.stdout).contains("watching the Top edge"), "{}", String::from_utf8_lossy(&o.stdout));
+    let bad = d.join("bad.json");
+    std::fs::write(&bad, r#"{"hotkey":"f99"}"#).unwrap();
+    for bin in [env!("CARGO_BIN_EXE_kfm-karabiner"), env!("CARGO_BIN_EXE_kfm-mac")] {
+        let o = Command::new(bin).arg("rule").env("KFM_KEYMAP", &bad).output().unwrap();
+        assert!(!o.status.success() && String::from_utf8_lossy(&o.stderr).contains("hotkey"), "{bin}: {}", String::from_utf8_lossy(&o.stderr));
+    }
+    let good = d.join("good.json");
+    std::fs::write(&good, r#"{"hotkey":"f15"}"#).unwrap();
+    let o = Command::new(env!("CARGO_BIN_EXE_kfm-karabiner")).arg("rule").env("KFM_KEYMAP", &good).output().unwrap();
+    let rule = String::from_utf8_lossy(&o.stdout);
+    assert!(o.status.success() && rule.contains("\"f15\"") && !rule.contains("\"f13\""), "{rule}");
+    // A rule planned with the default hotkey is reported when the keymap now says f15.
+    let kj = d.join("karabiner.json");
+    std::fs::write(&kj, r#"{"profiles":[{"name":"p","selected":true,"complex_modifications":{"rules":[]}}]}"#).unwrap();
+    let planned = d.join("planned.json");
+    let o = Command::new(env!("CARGO_BIN_EXE_kfm-karabiner")).args(["plan", "--config", kj.to_str().unwrap(), "--out", planned.to_str().unwrap()]).output().unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let ok = Command::new(env!("CARGO_BIN_EXE_kfm-karabiner")).args(["preflight", "--config", planned.to_str().unwrap()]).output().unwrap();
+    assert!(ok.status.success() && String::from_utf8_lossy(&ok.stdout).contains("hotkey: configured f13, installed rule f13"), "{}", String::from_utf8_lossy(&ok.stdout));
+    let bad = Command::new(env!("CARGO_BIN_EXE_kfm-karabiner")).args(["preflight", "--config", planned.to_str().unwrap()]).env("KFM_KEYMAP", &good).output().unwrap();
+    assert!(!bad.status.success() && String::from_utf8_lossy(&bad.stdout).contains("not the configured f15"), "{}", String::from_utf8_lossy(&bad.stdout));
+    let _ = std::fs::remove_dir_all(&d);
 }

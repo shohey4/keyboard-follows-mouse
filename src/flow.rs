@@ -181,16 +181,22 @@ pub enum WinEdgeEvent {
     Reached,
 }
 
-/// Windows side: turns cursor polls into `WinEdgeEvent`s. A step of at least
-/// `jump_px` between two polls that lands on the edge counts as a jump.
-pub struct EntryTracker { last: Option<(f64, f64)>, at_edge: bool, pub jump_px: f64 }
+/// Receiver side: turns cursor polls into `WinEdgeEvent`s at the receiver's
+/// outer `edge` that faces the keyboard's host (left by default: the receiver
+/// sits to the right), on the listed `displays` (None = all). A step of at
+/// least `jump_px` between two polls that lands on the edge counts as a jump.
+/// The names say "Win" for history; the receiver may be any OS.
+pub struct EntryTracker { last: Option<(f64, f64)>, at_edge: bool, pub jump_px: f64, pub edge: Edge, pub displays: Option<Vec<usize>> }
 
-impl Default for EntryTracker { fn default() -> Self { EntryTracker { last: None, at_edge: false, jump_px: 150.0 } } }
+impl Default for EntryTracker { fn default() -> Self { EntryTracker { last: None, at_edge: false, jump_px: 150.0, edge: Edge::Left, displays: None } } }
 
 impl EntryTracker {
+    /// Watch `edge` of the given displays (indices into the monitor list; None = all).
+    pub fn facing(edge: Edge, displays: Option<Vec<usize>>) -> Self { EntryTracker { edge, displays, ..Default::default() } }
+
     pub fn on_sample(&mut self, monitors: &[Rect], x: f64, y: f64) -> Option<WinEdgeEvent> {
-        let all: Vec<usize> = (0..monitors.len()).collect();
-        let at = edge_display(monitors, &all, Edge::Left, x, y).is_some();
+        let all: Vec<usize> = self.displays.clone().unwrap_or_else(|| (0..monitors.len()).collect());
+        let at = edge_display(monitors, &all, self.edge, x, y).is_some();
         let prev = self.last.replace((x, y));
         let was = std::mem::replace(&mut self.at_edge, at);
         let (px, py) = prev?;
@@ -668,6 +674,34 @@ mod tests {
         assert_eq!(t.on_sample(&m, 0.0, 312.0), Some(WinEdgeEvent::Reached), "walked to the edge");
         assert_eq!(t.on_sample(&m, 1000.0, 100.0), Some(WinEdgeEvent::Departed));
         assert_eq!(t.on_sample(&m, 1920.0, 100.0), None, "the shared border is not the outer left edge");
+    }
+
+    #[test]
+    fn entry_tracker_watches_the_configured_edge_and_displays() {
+        // Receiver above the keyboard's host: it watches its bottom edge. Two monitors
+        // side by side, not aligned (the second is 200 px lower and smaller).
+        let m = vec![Rect { x: 0.0, y: 0.0, w: 1920.0, h: 1080.0 }, Rect { x: 1920.0, y: 200.0, w: 1280.0, h: 720.0 }];
+        for (edge, (x0, y0), (x1, y1)) in [
+            (Edge::Bottom, (900.0, 300.0), (600.0, 1079.0)),
+            (Edge::Top, (900.0, 600.0), (600.0, 0.0)),
+            (Edge::Right, (2500.0, 500.0), (3199.0, 500.0)),
+            (Edge::Left, (900.0, 500.0), (0.0, 500.0)),
+        ] {
+            let mut t = EntryTracker::facing(edge, None);
+            assert_eq!(t.on_sample(&m, x0, y0), None, "{edge:?} baseline");
+            assert_eq!(t.on_sample(&m, x1, y1), Some(WinEdgeEvent::Entered), "{edge:?} entry");
+        }
+        // The lower monitor's top edge is outer only where nothing is above it (x >= 1920).
+        let mut t = EntryTracker::facing(Edge::Top, Some(vec![1]));
+        t.on_sample(&m, 2500.0, 600.0);
+        assert_eq!(t.on_sample(&m, 2500.0, 200.0), Some(WinEdgeEvent::Entered), "the stepped edge of monitor 2 counts");
+        let mut t = EntryTracker::facing(Edge::Top, Some(vec![1]));
+        t.on_sample(&m, 900.0, 600.0);
+        assert_eq!(t.on_sample(&m, 900.0, 0.0), None, "monitor 1 is not a listed display");
+        // The shared vertical border is never an outer edge.
+        let mut t = EntryTracker::facing(Edge::Right, None);
+        t.on_sample(&m, 900.0, 500.0);
+        assert_eq!(t.on_sample(&m, 1919.0, 500.0), None);
     }
 
     #[test]

@@ -15,6 +15,10 @@
 //!   hotkey returns to the Mac in one press; the link coming back resumes
 //!   Windows. `LinkLossPolicy::FallbackToMac` is the opt-in alternative.
 //! - A key-up we never saw go down (pressed before start) passes to the Mac.
+//!
+//! `Target`, `Dest` and the effects keep their Mac/Windows names in every user.
+//! For the Windows source (`winsource`, `kfm-send`) "Mac" means local (the PC
+//! running the capture) and "Windows" means the remote receiver.
 
 use std::collections::HashMap;
 

@@ -23,7 +23,7 @@ jobs:
       - name: Test
         # tests/uds_spike.rs asserts latency bounds that shared runners may miss;
         # it runs below as informational only. The e2e tests are Unix-only.
-        run: cargo test --release --locked --lib --bins --test e2e_binaries_udp --test e2e_synthetic
+        run: cargo test --release --locked --lib --bins --test e2e_binaries_udp --test e2e_synthetic --test kfm_config_cli
       - name: Latency spike (informational)
         if: runner.os != 'Windows'
         continue-on-error: true

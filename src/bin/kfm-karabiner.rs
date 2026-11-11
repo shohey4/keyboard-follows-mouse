@@ -47,7 +47,16 @@ fn run(args: &[String]) -> Result<(), String> {
     let endpoint = arg(args, "--endpoint");
     match args.first().map(String::as_str) {
         Some("preflight") => {
-            let p = preflight(&read(&config)?);
+            let v = read(&config)?;
+            let mut p = preflight(&v);
+            // The installed rule must use the configured hotkey, or the recovery text and the real escape key disagree.
+            let want = &keyboard_follows_mouse::remap::key_config().hotkey;
+            if let Some(i) = p.our_rule_index {
+                let got = v["profiles"].as_array().and_then(|ps| ps.iter().find(|p| p["selected"] == serde_json::json!(true)))
+                    .and_then(|p| p["complex_modifications"]["rules"][i]["manipulators"][0]["from"]["key_code"].as_str()).map(String::from);
+                println!("hotkey: configured {want}, installed rule {}", got.as_deref().unwrap_or("?"));
+                if got.as_deref() != Some(want.as_str()) { p.problems.push(format!("the installed rule's hotkey is not the configured {want}: apply the rule again with the same KFM_KEYMAP")); }
+            }
             println!("config: {}", config.display());
             println!("selected profile: {:?}", p.selected_profile);
             println!("complex rules: {} (ours at {:?})", p.rules, p.our_rule_index);
@@ -101,6 +110,7 @@ fn run(args: &[String]) -> Result<(), String> {
 
 fn main() -> ExitCode {
     if let Err(e) = keyboard_follows_mouse::karabiner::keyboard_from_env() { eprintln!("kfm-karabiner: {e}"); return ExitCode::FAILURE; }
+    if let Err(e) = keyboard_follows_mouse::remap::key_config_from_env() { eprintln!("kfm-karabiner: {e}"); return ExitCode::FAILURE; }
     let args: Vec<String> = std::env::args().skip(1).collect();
     match run(&args) {
         Ok(()) => ExitCode::SUCCESS,
