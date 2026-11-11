@@ -41,7 +41,10 @@ jobs:
       - name: Setup script on a fresh checkout (Windows PowerShell)
         if: runner.os == 'Windows'
         shell: powershell
+        # Actions runs this step with $ErrorActionPreference = 'Stop', which turns cargo's normal stderr
+        # progress into a terminating error; a user's shell does not, so relax it for this check only.
         run: |
+          $ErrorActionPreference = 'Continue'
           powershell -NoProfile -ExecutionPolicy Bypass -File scripts\setup.ps1 *> setup.log
           $code = $LASTEXITCODE
           Get-Content setup.log
