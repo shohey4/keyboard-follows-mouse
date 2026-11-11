@@ -116,3 +116,59 @@ fn help_and_doctor_run_and_change_nothing() {
     assert!(o.status.code() == Some(1), "no settings yet is a problem");
     assert!(!e.local().exists(), "doctor wrote nothing");
 }
+
+#[test]
+fn windows_source_init_prints_a_keygen_command_that_works_on_every_os() {
+    let e = Env::new("keygen");
+    let init = e.ok(&["init", "--role", "windows-source"]);
+    let key = key_arg(&e);
+    assert!(init.contains("keygen") && init.contains("--out") && init.contains(&key), "init prints the keygen command with the default path:\n{init}");
+    assert!(!init.contains("kfm-mac"), "kfm-mac cannot run on Windows:\n{init}");
+    assert!(!Path::new(&key).exists(), "init itself makes no key");
+    // the same command the plan prints for a missing key
+    let o = e.run(&["keygen", "--out", &key, "--dry-run"]);
+    assert!(o.status.success() && !Path::new(&key).exists(), "dry run writes nothing");
+    let o = e.run(&["keygen", "--out", &key]);
+    let (out, err) = (String::from_utf8_lossy(&o.stdout).into_owned(), String::from_utf8_lossy(&o.stderr).into_owned());
+    assert!(o.status.success(), "{out}{err}");
+    let bytes = std::fs::read(&key).unwrap();
+    let text = String::from_utf8(bytes).unwrap();
+    assert_eq!(text.trim().len(), 64, "64 hex characters");
+    assert!(text.trim().chars().all(|c| c.is_ascii_hexdigit()));
+    assert!(!out.contains(text.trim()) && !err.contains(text.trim()), "the key is never printed");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(std::fs::metadata(&key).unwrap().permissions().mode() & 0o777, 0o600);
+    }
+    // a second run refuses and leaves the key alone
+    let o = e.run(&["keygen", "--out", &key]);
+    assert!(!o.status.success());
+    assert!(String::from_utf8_lossy(&o.stderr).contains("refusing to overwrite"));
+    assert_eq!(std::fs::read_to_string(&key).unwrap(), text);
+}
+
+/// `kfm-karabiner preflight` must report a keyboard mismatch as a problem, so install.sh (which greps `problems: []`) fails closed.
+#[test]
+fn preflight_fails_when_only_the_keyboard_id_changed() {
+    let e = Env::new("device");
+    let dir = e.root.join("karabiner dir");
+    std::fs::create_dir_all(&dir).unwrap();
+    let (base, installed) = (dir.join("base.json"), dir.join("installed.json"));
+    std::fs::write(&base, r#"{"profiles":[{"name":"p","selected":true,"complex_modifications":{"rules":[]}}]}"#).unwrap();
+    let kar = |config: &Path, vendor: Option<&str>, args: &[&str]| {
+        let mut c = Command::new(env!("CARGO_BIN_EXE_kfm-karabiner"));
+        c.args(args).arg("--config").arg(config).env_remove("KFM_KEYMAP").env_remove("KFM_KEYBOARD_VENDOR_ID").env_remove("KFM_KEYBOARD_PRODUCT_ID");
+        if let Some(v) = vendor { c.env("KFM_KEYBOARD_VENDOR_ID", v).env("KFM_KEYBOARD_PRODUCT_ID", "0x5678"); }
+        c.output().unwrap()
+    };
+    let o = Command::new(env!("CARGO_BIN_EXE_kfm-karabiner")).args(["plan", "--config"]).arg(&base).arg("--out").arg(&installed)
+        .env_remove("KFM_KEYMAP").env_remove("KFM_KEYBOARD_VENDOR_ID").env_remove("KFM_KEYBOARD_PRODUCT_ID").output().unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let same = kar(&installed, None, &["preflight"]);
+    let text = String::from_utf8_lossy(&same.stdout).into_owned();
+    assert!(same.status.success() && text.contains("problems: []") && text.contains("device: configured 0x320f:0x5055, installed rule 0x320f:0x5055"), "{text}");
+    let other = kar(&installed, Some("0x1234"), &["preflight"]);
+    let text = String::from_utf8_lossy(&other.stdout).into_owned();
+    assert!(!other.status.success() && !text.contains("problems: []") && text.contains("device: configured 0x1234:0x5678, installed rule 0x320f:0x5055"), "{text}");
+}

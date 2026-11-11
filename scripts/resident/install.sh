@@ -23,6 +23,9 @@ PEER="${KFM_PEER:?set KFM_PEER to the Windows receiver, e.g. 192.0.2.10:47501}";
 EDGE="${KFM_FLOW_EDGE:-right}"; DISP="${KFM_FLOW_DISPLAY:-all}"; LT="${KFM_LINK_TIMEOUT:-}"
 KV="${KFM_KEYBOARD_VENDOR_ID:-}"; KP="${KFM_KEYBOARD_PRODUCT_ID:-}"
 TOS="${KFM_TARGET_OS:-windows}"; KM="${KFM_KEYMAP:-}"
+# The kfm-karabiner calls below must see the same keyboard the rule will capture: pass both ids on, or unset
+# both when empty (an exported empty id, e.g. from `set -a; . local/config.sh`, would make kfm-karabiner refuse).
+if [ -n "$KV$KP" ]; then export KFM_KEYBOARD_VENDOR_ID="$KV" KFM_KEYBOARD_PRODUCT_ID="$KP"; else unset KFM_KEYBOARD_VENDOR_ID KFM_KEYBOARD_PRODUCT_ID; fi
 case "$TOS" in windows|mac) ;; *) echo "KFM_TARGET_OS must be windows or mac"; exit 1;; esac
 
 echo "checks:"

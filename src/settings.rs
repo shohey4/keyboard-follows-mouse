@@ -32,7 +32,7 @@ pub const INSTALLED_KEYS: &[&str] = &[
 ];
 const DOCS: &[(&str, &str)] = &[
     ("KFM_ROLE", "mac-source | receiver | windows-source (experimental): what THIS computer does"),
-    ("KFM_KEY", "pre-shared key file (made by `kfm-mac keygen --out PATH`, copied to the other computer by you); never printed"),
+    ("KFM_KEY", "pre-shared key file (made by `kfm-config keygen --out PATH`, copied to the other computer by you); never printed"),
     ("KFM_PEER", "the OTHER computer's IP:PORT (receiver: the source; source: the receiver)"),
     ("KFM_BIND", "THIS computer's LAN IP:PORT"),
     ("KFM_FLOW_EDGE", "this computer's screen edge that faces the other computer: left | right | top | bottom"),
@@ -786,16 +786,27 @@ pub fn status(ws: &Workspace, running: Running) -> Result<Vec<FileStatus>, Strin
 
 /// What `kfm-karabiner preflight` says about our rule (its stdout is parsed; the file it reads is Karabiner's).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum RuleState { Current, HotkeyDiffers { configured: String, installed: String }, NotInstalled, Unknown }
+pub enum RuleState {
+    /// Installed, and both its hotkey and its keyboard match the configuration.
+    Current,
+    /// Installed but stale: apply the rule again. `reason` says what differs.
+    Differs { reason: String },
+    NotInstalled,
+    /// preflight did not say (a line is missing or unparseable): never treated as current.
+    Unknown,
+}
+
+fn preflight_pair<'a>(out: &'a str, prefix: &str) -> Option<(&'a str, &'a str)> {
+    out.lines().find_map(|l| l.strip_prefix(prefix)).and_then(|l| l.split_once(", installed rule "))
+}
 
 pub fn rule_state(preflight_stdout: &str) -> RuleState {
     if preflight_stdout.contains("(ours at None)") { return RuleState::NotInstalled; }
-    let Some(l) = preflight_stdout.lines().find_map(|l| l.strip_prefix("hotkey: configured ")) else { return RuleState::Unknown };
-    match l.split_once(", installed rule ") {
-        Some((c, i)) if c == i => RuleState::Current,
-        Some((c, i)) => RuleState::HotkeyDiffers { configured: c.into(), installed: i.into() },
-        None => RuleState::Unknown,
-    }
+    let (Some((hc, hi)), Some((dc, di))) = (preflight_pair(preflight_stdout, "hotkey: configured "), preflight_pair(preflight_stdout, "device: configured ")) else { return RuleState::Unknown };
+    let mut reasons = vec![];
+    if hc != hi { reasons.push(format!("hotkey: the installed rule uses {hi} but the keymap says {hc}")); }
+    if dc != di || di.contains('?') { reasons.push(format!("keyboard: the installed rule is limited to {di} but KFM_KEYBOARD_VENDOR_ID/PRODUCT_ID say {dc} (unset = the tested Rainy75, 0x320f:0x5055)")); }
+    if reasons.is_empty() { RuleState::Current } else { RuleState::Differs { reason: reasons.join("; ") } }
 }
 
 // ---- command lines for kfm-receive / kfm-send ----
@@ -933,7 +944,7 @@ pub fn doctor_checks(ws: &Workspace, f: &Facts) -> Vec<Check> {
             KeyFile::BadMode(m) => c.push(Check::issue(Level::Problem, format!("key file mode is {m:o}, others can read it"), "the key must be owner-only", "`chmod 600` on the key file (kfm-config does not change permissions)", "none needed")),
             KeyFile::NotAFile => c.push(Check::issue(Level::Problem, "KFM_KEY is not a file", "the path is a folder or special file", "`kfm-config set KFM_KEY <path>`", "`kfm-config restore <timestamp>`")),
             KeyFile::Missing => c.push(Check::issue(Level::Problem, "key file does not exist", "no key has been made on this computer yet",
-                if role == Role::MacSource || f.os == "macos" { "on the Mac: `kfm-mac keygen --out <KFM_KEY path>`; on the other computer, copy the same file yourself over a channel you trust (never through chat)" } else { "copy the key file from the Mac yourself over a channel you trust (USB, AirDrop); never through chat" },
+                "make it with `kfm-config keygen --out <KFM_KEY path>` (any OS, never overwrites, never prints it), then copy the same file to the other computer yourself over a channel you trust (never through chat); or copy the other computer's file here",
                 "delete the key file (nothing else depends on it until a resident is installed)")),
         }
     }
@@ -953,9 +964,9 @@ pub fn doctor_checks(ws: &Workspace, f: &Facts) -> Vec<Check> {
                         c.push(Check::ok("kfm-karabiner preflight", "no problems"));
                         match rule_state(out) {
                             RuleState::NotInstalled => c.push(Check::issue(Level::Info, "the kfm Karabiner rule is not installed yet", "first setup", "`kfm-config apply` shows the `kfm-karabiner apply` step (it backs up karabiner.json first)", "`kfm-karabiner restore --backup <file> --confirm-restore`")),
-                            RuleState::HotkeyDiffers { configured, installed } => c.push(Check::issue(Level::Warn, format!("Karabiner rule uses {installed} but the keymap says {configured}"), "the hotkey was changed after the rule was applied", "apply the rule again (`kfm-config apply` shows the command)", "`kfm-karabiner restore --backup <file> --confirm-restore`")),
-                            RuleState::Current => c.push(Check::ok("Karabiner rule", "installed with the configured hotkey")),
-                            RuleState::Unknown => {}
+                            RuleState::Differs { reason } => c.push(Check::issue(Level::Warn, format!("the installed Karabiner rule is out of date ({reason})"), "the hotkey or the keyboard id was changed after the rule was applied, so the old rule keeps capturing the old setting", "apply the rule again (`kfm-config apply` shows the command)", "`kfm-karabiner restore --backup <file> --confirm-restore`")),
+                            RuleState::Current => c.push(Check::ok("Karabiner rule", "installed with the configured hotkey and keyboard")),
+                            RuleState::Unknown => c.push(Check::issue(Level::Warn, "cannot tell whether the installed Karabiner rule matches the configured hotkey and keyboard", "kfm-karabiner preflight did not report them", "run `kfm-karabiner preflight` by hand; `kfm-config apply` includes the rule step", "none (read-only)")),
                         }
                     }
                     Some(Err(out)) => c.push(Check::issue(Level::Problem, "kfm-karabiner preflight reports problems", out.trim(), "read the problem list; fix it in Karabiner-Elements (kfm-config never edits Karabiner)", "none (preflight is read-only)")),
@@ -1013,15 +1024,15 @@ pub fn apply_plan(p: &PlanCtx) -> Result<String, String> {
             let uninstall = p.repo_root.join("scripts/resident/uninstall.sh").to_string_lossy().into_owned();
             let mut n = 1;
             let mut step = |o: &mut Vec<String>, title: &str, lines: Vec<String>| { o.push(format!("\nStep {n}: {title}")); o.extend(lines.into_iter().map(|l| format!("  {l}"))); n += 1; };
-            if !p.key_exists { step(&mut o, "make the pre-shared key (new file, mode 600)", vec![format!("run:      {}", sh.command(&exe("kfm-mac"), &["keygen".into(), "--out".into(), s.get("KFM_KEY").into()])),
+            if !p.key_exists { step(&mut o, "make the pre-shared key (new file, mode 600)", vec![format!("run:      {}", sh.command(&exe("kfm-config"), &["keygen".into(), "--out".into(), s.get("KFM_KEY").into()])),
                 "then copy that file to the receiver yourself (USB, AirDrop); never through chat".into(), format!("rollback: delete {}", s.get("KFM_KEY"))]); }
             let km = p.ws.keymap_path().to_string_lossy().into_owned();
             let kenv = format!("{}{}", sh.env_prefix("KFM_KEYMAP", &km), if s.get("KFM_KEYBOARD_VENDOR_ID").is_empty() { String::new() } else { format!("{}{}", sh.env_prefix("KFM_KEYBOARD_VENDOR_ID", s.get("KFM_KEYBOARD_VENDOR_ID")), sh.env_prefix("KFM_KEYBOARD_PRODUCT_ID", s.get("KFM_KEYBOARD_PRODUCT_ID"))) });
             let kconfig = "$HOME/.config/karabiner/karabiner.json";
             match &p.rule {
-                RuleState::Current => o.push("\nKarabiner rule: already installed with this hotkey; no step needed.".into()),
+                RuleState::Current => o.push("\nKarabiner rule: already installed with this hotkey and keyboard; no step needed.".into()),
                 other => {
-                    let why = match other { RuleState::NotInstalled => "the kfm rule is not installed yet".to_string(), RuleState::HotkeyDiffers { configured, installed } => format!("the installed rule uses {installed} but the keymap says {configured}"), _ => "preflight could not tell whether the rule matches (run `kfm-karabiner preflight`)".to_string() };
+                    let why = match other { RuleState::NotInstalled => "the kfm rule is not installed yet".to_string(), RuleState::Differs { reason } => reason.clone(), _ => "preflight could not tell whether the rule matches (run `kfm-karabiner preflight`)".to_string() };
                     step(&mut o, &format!("Karabiner rule ({why}); changes ~/.config/karabiner/karabiner.json"), vec![
                         format!("dry run:  {kenv}{} --out {}   # writes only that file; Karabiner untouched", sh.command(&exe("kfm-karabiner"), &["plan".into()]), sh.quote(&p.ws.dir.join("karabiner-plan.json").to_string_lossy())),
                         format!("apply:    {kenv}{} --config \"{kconfig}\" --confirm-backup-and-apply   # backs up first and prints the backup path", sh.command(&exe("kfm-karabiner"), &["apply".into()])),
@@ -1040,10 +1051,11 @@ pub fn apply_plan(p: &PlanCtx) -> Result<String, String> {
                 format!("rollback: sh {} (dry run), then sh {} --apply", sh.quote(&uninstall), sh.quote(&uninstall)),
                 "install.sh stops by itself if the key is unreadable, the Karabiner rule is missing, or something is already running".into()]);
             step(&mut o, "check, pause or resume (nothing restarts; kfmctl has no restart)", vec!["sh \"$HOME/Library/Application Support/keyboard-follows-mouse/bin/kfmctl.sh\" status|pause|resume".into()]);
-            if matches!(p.rule, RuleState::HotkeyDiffers { .. } | RuleState::NotInstalled | RuleState::Unknown) { o.push("\nOrder matters: the Karabiner rule step must be done BEFORE the install step, even before its dry run: install.sh checks that the kfm rule is installed first and matches the hotkey, and stops otherwise.".into()); }
+            if matches!(p.rule, RuleState::Differs { .. } | RuleState::NotInstalled | RuleState::Unknown) { o.push("\nOrder matters: the Karabiner rule step must be done BEFORE the install step, even before its dry run: install.sh checks that the kfm rule is installed first and matches the hotkey, and stops otherwise.".into()); }
         }
         Role::Receiver | Role::WindowsSource => {
             let args = run_args(s, role)?;
+            if !p.key_exists { o.push(format!("\nStep 0: the key file does not exist yet. Either copy it from the other computer yourself (USB, AirDrop; never chat), or make it here and copy it back:\n  {}\n  rollback: delete that file", sh.command(&exe("kfm-config"), &["keygen".into(), "--out".into(), s.get("KFM_KEY").into()]))); }
             let bin = exe(if role == Role::Receiver { "kfm-receive" } else { "kfm-send" });
             let with = |extra: &[&str]| { let mut a = args.clone(); a.extend(extra.iter().map(|e| e.to_string())); a };
             if role == Role::WindowsSource {
@@ -1304,8 +1316,18 @@ mod tests {
 
     #[test]
     fn rule_state_and_etime() {
-        assert_eq!(rule_state("hotkey: configured f13, installed rule f13\ncomplex rules: 2 (ours at Some(0))"), RuleState::Current);
-        assert_eq!(rule_state("hotkey: configured f15, installed rule f13\n"), RuleState::HotkeyDiffers { configured: "f15".into(), installed: "f13".into() });
+        let pf = |hot: &str, dev: &str| format!("hotkey: configured f13, installed rule {hot}\ndevice: configured 0x320f:0x5055, installed rule {dev}\ncomplex rules: 2 (ours at Some(0))");
+        assert_eq!(rule_state(&pf("f13", "0x320f:0x5055")), RuleState::Current);
+        // same hotkey, only the keyboard id differs (or cannot be read): the old rule still captures the old keyboard
+        assert!(matches!(rule_state(&pf("f13", "0x1234:0x5678")), RuleState::Differs { reason } if reason.contains("keyboard") && reason.contains("0x1234")));
+        assert!(matches!(rule_state(&pf("f13", "?")), RuleState::Differs { .. }));
+        assert!(matches!(rule_state(&pf("f15", "0x320f:0x5055")), RuleState::Differs { reason } if reason.contains("hotkey") && !reason.contains("keyboard")));
+        assert!(matches!(rule_state(&pf("f15", "0x1:0x2")), RuleState::Differs { reason } if reason.contains("hotkey") && reason.contains("keyboard")));
+        // the config names a keyboard but the rule still has the default one (and the reverse is the case above)
+        assert!(matches!(rule_state("hotkey: configured f13, installed rule f13\ndevice: configured 0x1234:0x5678, installed rule 0x320f:0x5055\n"), RuleState::Differs { .. }));
+        // the device line is missing or malformed: never current
+        assert_eq!(rule_state("hotkey: configured f13, installed rule f13\ncomplex rules: 2 (ours at Some(0))"), RuleState::Unknown);
+        assert_eq!(rule_state("hotkey: configured f13, installed rule f13\ndevice: garbage\n"), RuleState::Unknown);
         assert_eq!(rule_state("complex rules: 1 (ours at None)"), RuleState::NotInstalled);
         assert_eq!(rule_state("nothing"), RuleState::Unknown);
         assert_eq!(parse_etime(" 05:07"), Some(307));
@@ -1369,7 +1391,7 @@ mod tests {
         let s = Settings::parse(&std::fs::read_to_string(w.config_path()).unwrap()).unwrap();
         let root = Path::new("/r repo");
         let foreign = Jobs { ours_loaded: vec![], others: vec!["local.r75-mac".into()] };
-        let mk = |jobs| PlanCtx { settings: &s, ws: &w, repo_root: root, shell: Shell::Sh, os: "macos", rule: RuleState::HotkeyDiffers { configured: "f15".into(), installed: "f13".into() }, jobs, key_exists: false, validated: true };
+        let mk = |jobs| PlanCtx { settings: &s, ws: &w, repo_root: root, shell: Shell::Sh, os: "macos", rule: RuleState::Differs { reason: "hotkey: the installed rule uses f13 but the keymap says f15".into() }, jobs, key_exists: false, validated: true };
         let stop = apply_plan(&mk(Some(&foreign))).unwrap_err();
         assert!(stop.contains("STOP") && stop.contains("local.r75-mac") && !stop.contains("Step 1") && !stop.contains("--confirm-backup-and-apply"), "{stop}");
         let jobs = Jobs { ours_loaded: vec!["local.kfm-mac".into()], others: vec![] };

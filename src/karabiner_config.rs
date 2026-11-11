@@ -8,7 +8,7 @@
 
 use serde_json::{Value, json};
 
-use crate::karabiner::{keyboard, rule, usage_of, ROUTE_VAR, TESTED_KEYBOARD};
+use crate::karabiner::{keyboard, rule, usage_of, Keyboard, ROUTE_VAR, TESTED_KEYBOARD};
 use crate::keys::Usage;
 
 /// Our rule is recognised by this description prefix.
@@ -43,6 +43,38 @@ fn is_ours(rule: &Value) -> bool {
 fn mentions_rainy75(v: &Value) -> bool {
     let k = keyboard();
     v.to_string().contains(&format!("\"vendor_id\":{}", k.vendor_id)) && v.to_string().contains(&format!("\"product_id\":{}", k.product_id))
+}
+
+/// The keyboard (vendor_id, product_id) that every manipulator of the installed rule `rule_index` of the selected
+/// profile is limited to. None when a manipulator has no single device condition or they disagree: the rule cannot
+/// be trusted to capture the configured keyboard.
+pub fn installed_device(config: &Value, rule_index: usize) -> Option<(u64, u64)> {
+    let (_, profile) = selected(config)?;
+    let ms = profile["complex_modifications"]["rules"][rule_index]["manipulators"].as_array()?;
+    let mut found: Option<(u64, u64)> = None;
+    for m in ms {
+        let mut devices = m["conditions"].as_array()?.iter().filter(|c| c["type"] == "device_if");
+        let ids = devices.next()?["identifiers"].as_array()?;
+        if devices.next().is_some() || ids.len() != 1 { return None; }
+        let d = (ids[0]["vendor_id"].as_u64()?, ids[0]["product_id"].as_u64()?);
+        if found.is_some_and(|f| f != d) { return None; }
+        found = Some(d);
+    }
+    found
+}
+
+fn hex_pair(k: Option<(u64, u64)>) -> String { k.map_or("?".into(), |(v, p)| format!("{v:#06x}:{p:#06x}")) }
+
+/// The `device:` line of `kfm-karabiner preflight` (parsed by `kfm-config`).
+pub fn device_line(configured: Keyboard, installed: Option<(u64, u64)>) -> String {
+    format!("device: configured {}, installed rule {}", hex_pair(Some((configured.vendor_id, configured.product_id))), hex_pair(installed))
+}
+
+/// A preflight problem when the installed rule would capture another keyboard than the configured one (or cannot be read).
+pub fn device_problem(configured: Keyboard, installed: Option<(u64, u64)>) -> Option<String> {
+    (installed != Some((configured.vendor_id, configured.product_id))).then(|| format!(
+        "the installed rule is limited to keyboard {} but KFM_KEYBOARD_VENDOR_ID/PRODUCT_ID say {}: apply the rule again with the same settings",
+        hex_pair(installed), hex_pair(Some((configured.vendor_id, configured.product_id)))))
 }
 
 pub fn preflight(config: &Value) -> Preflight {
@@ -243,6 +275,37 @@ pub(crate) mod tests {
                 }
             ]
         })
+    }
+
+    /// The installed rule's device ids, and the preflight problem when they are not the configured keyboard.
+    #[test]
+    fn installed_rule_device_is_compared_with_the_configured_keyboard() {
+        let installed = install(&fixture(), None).unwrap();
+        // install() ran with the default (tested) keyboard
+        assert_eq!(installed_device(&installed, 0), Some((RAINY75_VENDOR_ID, RAINY75_PRODUCT_ID)));
+        assert_eq!(device_problem(TESTED_KEYBOARD, installed_device(&installed, 0)), None, "exact match");
+        let other = Keyboard { vendor_id: 0x1234, product_id: 0x5678 };
+        let p = device_problem(other, installed_device(&installed, 0)).expect("same hotkey, other keyboard: a problem");
+        assert!(p.contains("0x320f:0x5055") && p.contains("0x1234:0x5678"), "{p}");
+        assert_eq!(device_line(other, installed_device(&installed, 0)), "device: configured 0x1234:0x5678, installed rule 0x320f:0x5055");
+        // a rule written for another keyboard, checked against the default (config has no ids): not current
+        let mut moved = installed.clone();
+        for m in moved["profiles"][1]["complex_modifications"]["rules"][0]["manipulators"].as_array_mut().unwrap() {
+            for c in m["conditions"].as_array_mut().unwrap().iter_mut().filter(|c| c["type"] == "device_if") { c["identifiers"] = json!([{"vendor_id": 0x1234, "product_id": 0x5678}]); }
+        }
+        assert_eq!(installed_device(&moved, 0), Some((0x1234, 0x5678)));
+        assert!(device_problem(TESTED_KEYBOARD, installed_device(&moved, 0)).is_some());
+        assert_eq!(device_problem(other, installed_device(&moved, 0)), None, "ids set in the rule and in the config, equal");
+        // one manipulator disagreeing, a missing device condition, a missing rule: unreadable, so a problem
+        let mut mixed = installed.clone();
+        mixed["profiles"][1]["complex_modifications"]["rules"][0]["manipulators"][0]["conditions"][0]["identifiers"] = json!([{"vendor_id": 1, "product_id": 2}]);
+        assert_eq!(installed_device(&mixed, 0), None);
+        let mut bare = installed.clone();
+        bare["profiles"][1]["complex_modifications"]["rules"][0]["manipulators"][0]["conditions"] = json!([]);
+        assert_eq!(installed_device(&bare, 0), None);
+        assert_eq!(installed_device(&installed, 99), None);
+        assert!(device_problem(TESTED_KEYBOARD, None).is_some());
+        assert!(device_line(TESTED_KEYBOARD, None).ends_with("installed rule ?"));
     }
 
     #[test]

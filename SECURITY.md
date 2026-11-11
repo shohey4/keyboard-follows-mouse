@@ -23,7 +23,7 @@ access.
 
 ## What the protocol does
 
-- **Pre-shared key.** 32 random bytes. `kfm-mac keygen` writes the key file
+- **Pre-shared key.** 32 random bytes. `kfm-config keygen` (or `kfm-mac keygen` on a Mac) writes the key file
   with mode `0600`, and both binaries refuse a key file that is readable by
   others on Unix. On Windows the ACL is **not checked** (a warning is
   printed); protect the file yourself.
@@ -66,7 +66,7 @@ access.
 ## Known limits
 
 - No forward secrecy: anyone who later obtains the key can decrypt recorded
-  traffic. Rotate the key (`kfm-mac keygen`, reinstall on both sides) if a
+  traffic. Rotate the key (`kfm-config keygen`, reinstall on both sides) if a
   machine or the key file may have been exposed.
 - Denial of service: an attacker on the LAN can drop traffic or flood the UDP
   port. The link then goes down and the keyboard returns to the Mac; typing in

@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 use keyboard_follows_mouse::flow::{outer_edge_share, Edge, Rect};
+use keyboard_follows_mouse::keyfile;
 use keyboard_follows_mouse::remap::{self, TargetOs};
 use keyboard_follows_mouse::settings::*;
 
@@ -30,6 +31,7 @@ Add --dry-run to any change to see before -> after and the validation result wit
   kfm-config unmap TARGET KEY             remove one mapping
   kfm-config hotkey KEY                   switch hotkey, f13..f20 only (then the Karabiner rule must be applied again)
   kfm-config reset windows|mac|all        defaults for one target, or hotkey + all remaps
+  kfm-config keygen [--out PATH]          make the pre-shared key (32 random bytes; never overwrites; 0600 on unix); the key is never printed
   kfm-config keys                         the forwarded key names (left/right modifiers and JIS lang1/lang2 included)
   kfm-config layout displays              this computer's displays and which edges are OUTER edges
   kfm-config validate                     validate both files; on success record a fingerprint in local/.validated
@@ -39,19 +41,20 @@ Add --dry-run to any change to see before -> after and the validation result wit
   kfm-config run-args receiver|windows-source [--shell sh|powershell]
                                           kfm-receive / kfm-send arguments from config.sh, quoted for this OS
 
-Options: --dir PATH (settings folder, default <repo>/local), --installed-dir PATH (tests), --dry-run, --reveal, --help.
+Options: --out PATH (keygen), --dir PATH (settings folder, default <repo>/local), --installed-dir PATH (tests), --dry-run, --reveal, --help.
 The repo is found from this binary's location or the current folder; no .git is needed.";
 
-struct Args { pos: Vec<String>, dir: Option<PathBuf>, installed: Option<PathBuf>, dry_run: bool, reveal: bool, list: bool, role: Option<String>, shell: Option<String> }
+struct Args { pos: Vec<String>, out: Option<PathBuf>, dir: Option<PathBuf>, installed: Option<PathBuf>, dry_run: bool, reveal: bool, list: bool, role: Option<String>, shell: Option<String> }
 
 fn parse_args(raw: &[String]) -> Result<Args, String> {
-    let mut a = Args { pos: vec![], dir: None, installed: None, dry_run: false, reveal: false, list: false, role: None, shell: None };
+    let mut a = Args { pos: vec![], out: None, dir: None, installed: None, dry_run: false, reveal: false, list: false, role: None, shell: None };
     let mut it = raw.iter();
     while let Some(x) = it.next() {
         let mut val = |n: &str| it.next().cloned().ok_or(format!("{n} needs a value"));
         match x.as_str() {
             "--dir" => a.dir = Some(PathBuf::from(val("--dir")?)),
             "--installed-dir" => a.installed = Some(PathBuf::from(val("--installed-dir")?)),
+            "--out" => a.out = Some(PathBuf::from(val("--out")?)),
             "--role" => a.role = Some(val("--role")?),
             "--shell" => a.shell = Some(val("--shell")?),
             "--dry-run" => a.dry_run = true,
@@ -210,11 +213,11 @@ fn cmd_init(c: &Ctx, a: &Args) -> Result<ExitCode, String> {
     for p in &made { println!("created {}", p.display()); }
     println!("next: set the addresses and layout, e.g. `kfm-config set KFM_PEER <other computer IP:PORT> KFM_BIND <this computer IP:PORT>`, then `kfm-config validate`.");
     let key = c.ws.dir.join("kfm-psk.key").to_string_lossy().into_owned();
-    if role == Role::Receiver { println!("the key file is NOT made here: copy the file made on the source computer to exactly this path yourself (USB, AirDrop; never through chat):\n  {key}"); }
-    else {
-        let kfm_mac = c.root().map(|r| r.join("target/release").join(if cfg!(windows) { "kfm-mac.exe" } else { "kfm-mac" }).to_string_lossy().into_owned()).unwrap_or_else(|_| "kfm-mac".into());
-        println!("the key file (default KFM_KEY) does not exist yet. kfm-config does not make it; to make it on this computer (needs your approval, creates one new file, mode 600):\n  {}\nthen copy that file to the receiver yourself (USB, AirDrop; never through chat).", Shell::native().command(&kfm_mac, &["keygen".into(), "--out".into(), key]));
-    }
+    let me = std::env::current_exe().map(|e| e.to_string_lossy().into_owned()).unwrap_or_else(|_| "kfm-config".into());
+    let cmd = Shell::native().command(&me, &["keygen".into(), "--out".into(), key.clone()]);
+    println!("the key file (default KFM_KEY) does not exist yet. To make it on this computer (needs your approval; creates one new file, never overwrites, never prints the key):\n  {cmd}");
+    if role == Role::Receiver { println!("both computers need the SAME key: either copy the file made on the source computer to exactly this path, or make it here with the command above and copy it back to the source. Use a channel you trust (USB, AirDrop); never chat or email."); }
+    else { println!("then copy that file to the receiver yourself over a channel you trust (USB, AirDrop); never chat or email."); }
     Ok(ExitCode::SUCCESS)
 }
 
@@ -230,6 +233,19 @@ fn cmd_show(c: &Ctx, a: &Args) -> Result<ExitCode, String> {
     let k = remap::parse(c.ws.read_keymap()?.as_deref().unwrap_or("{}")).map_err(|e| format!("keymap.json: {e}"))?;
     println!("\nKeys:\n  {}", keymap_lines(&k).join("\n  "));
     if !a.reveal { println!("\n(addresses and paths are masked; --reveal shows them. The key file is never printed.)"); }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Make the pre-shared key with the same code as `kfm-mac keygen` (works on Windows too). Never prints it.
+fn cmd_keygen(c: &Ctx, a: &Args) -> Result<ExitCode, String> {
+    let out = match a.out.clone() { Some(p) => p, None => c.ws.dir.join("kfm-psk.key") };
+    if a.dry_run { println!("dry run: would create the key file {} (32 random bytes, owner-only); nothing written.", out.display()); return Ok(ExitCode::SUCCESS); }
+    if let Some(parent) = out.parent().filter(|p| !p.as_os_str().is_empty()) { std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?; }
+    keyfile::generate(&out).map_err(|e| if e.kind() == std::io::ErrorKind::AlreadyExists { format!("{} already exists; refusing to overwrite a key (move it away first if you really want a new one)", out.display()) } else { format!("{}: {e}", out.display()) })?;
+    println!("key written (owner-only on unix): {}", out.display());
+    #[cfg(not(unix))]
+    println!("kfm-config: key file ACL is not set on Windows; restrict it with icacls <file> /inheritance:r /grant:r \"%USERNAME%:R\"");
+    println!("the key was not printed. Copy this file to the other computer yourself over a channel you trust; never through chat or email.");
     Ok(ExitCode::SUCCESS)
 }
 
@@ -275,9 +291,9 @@ fn cmd_status(c: &Ctx) -> Result<ExitCode, String> {
     match &c.ws.installed { Some(d) => println!("installed copies are read from {}", d.display()), None => println!("(no installed-copy comparison on this OS: nothing is installed by install.sh here)") }
     if let Some(s) = c.settings() && s.role() == Some(Role::MacSource) {
         match c.preflight(&s).map(|r| r.unwrap_or_else(|e| e)).map(|t| rule_state(&t)) {
-            Some(RuleState::HotkeyDiffers { configured, installed }) => println!("Karabiner: the installed rule uses {installed} but the keymap says {configured}: apply the rule again (`kfm-config apply` shows the command)."),
+            Some(RuleState::Differs { reason }) => println!("Karabiner: the installed rule is out of date ({reason}): apply the rule again (`kfm-config apply` shows the command)."),
             Some(RuleState::NotInstalled) => println!("Karabiner: the kfm rule is not installed yet (`kfm-config apply`)."),
-            Some(RuleState::Current) => println!("Karabiner: the installed rule matches the configured hotkey."),
+            Some(RuleState::Current) => println!("Karabiner: the installed rule matches the configured hotkey and keyboard."),
             _ => println!("Karabiner: not checked (kfm-karabiner not built, or no karabiner.json)."),
         }
     }
@@ -343,6 +359,7 @@ fn run(raw: &[String]) -> Result<ExitCode, String> {
         "swap" => { let v = need(&a, 3, "swap TARGET A B")?; key_op(&c, &a, KeyOp::Swap { target: target(&v[0])?, a: v[1].clone(), b: v[2].clone() }) }
         "hotkey" => key_op(&c, &a, KeyOp::Hotkey(need(&a, 1, "hotkey KEY")?[0].clone())),
         "reset" => key_op(&c, &a, match need(&a, 1, "reset windows|mac|all")?[0].as_str() { "all" => KeyOp::ResetAll, t => KeyOp::ResetTarget(target(t)?) }),
+        "keygen" => cmd_keygen(&c, &a),
         "keys" => cmd_keys(),
         "layout" => cmd_layout(&c, &a),
         "validate" => cmd_validate(&c),

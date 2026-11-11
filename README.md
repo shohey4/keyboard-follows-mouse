@@ -138,7 +138,7 @@ The examples use documentation addresses (`192.0.2.x`); use your own.
    trust (not chat, not email):
 
    ```sh
-   ./target/release/kfm-mac keygen --out ~/kfm-psk.key     # written 0600
+   ./target/release/kfm-config keygen --out ~/kfm-psk.key  # written 0600; same as `kfm-mac keygen`
    ```
 
    On Windows, keep the key file readable only by your user (the program

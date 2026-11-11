@@ -34,7 +34,7 @@ Before doing anything, tell the user in plain words:
   and do not put LAN addresses or the key path into chat, issues, commits or
   any external service. `kfm-config show` masks them; use `--reveal` only if
   the user asks to see them locally. The key is made locally
-  (`kfm-mac keygen`) and copied to the other computer by the user over a
+  (`kfm-config keygen`) and copied to the other computer by the user over a
   channel they trust (USB stick, AirDrop, a local file share), never through
   you.
 - **Do not overwrite an existing installation.** `kfm-config doctor` reports
@@ -70,7 +70,7 @@ Before doing anything, tell the user in plain words:
    `local/config.sh` (addresses, layout, target OS) and `local/keymap.json`
    (hotkey and key remaps). These two files are the only place settings live;
    do not create others. Make the key on the source with the command `init`
-   prints (`kfm-mac keygen --out <path>`); the user copies that file to the
+   prints (`kfm-config keygen --out <path>`, works on Windows too); the user copies that file to the
    other computer and sets `KFM_KEY` there to where they put it.
 4. `kfm-config validate`, then `kfm-config doctor`.
 5. Dry runs: `kfm-config apply` prints the exact commands for this computer,

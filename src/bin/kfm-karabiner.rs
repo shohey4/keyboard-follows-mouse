@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use keyboard_follows_mouse::karabiner::rule;
-use keyboard_follows_mouse::karabiner_config::{install, preflight, uninstall, verify};
+use keyboard_follows_mouse::karabiner_config::{device_line, device_problem, installed_device, install, preflight, uninstall, verify};
 use serde_json::Value;
 
 fn arg(args: &[String], name: &str) -> Option<String> {
@@ -56,6 +56,10 @@ fn run(args: &[String]) -> Result<(), String> {
                     .and_then(|p| p["complex_modifications"]["rules"][i]["manipulators"][0]["from"]["key_code"].as_str()).map(String::from);
                 println!("hotkey: configured {want}, installed rule {}", got.as_deref().unwrap_or("?"));
                 if got.as_deref() != Some(want.as_str()) { p.problems.push(format!("the installed rule's hotkey is not the configured {want}: apply the rule again with the same KFM_KEYMAP")); }
+                // The rule captures one keyboard: a changed KFM_KEYBOARD_* with the old rule would leave the old keyboard captured.
+                let (configured, installed) = (keyboard_follows_mouse::karabiner::keyboard(), installed_device(&v, i));
+                println!("{}", device_line(configured, installed));
+                if let Some(m) = device_problem(configured, installed) { p.problems.push(m); }
             }
             println!("config: {}", config.display());
             println!("selected profile: {:?}", p.selected_profile);
