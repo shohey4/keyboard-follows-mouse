@@ -30,3 +30,30 @@ jobs:
         run: cargo test --release --locked --test uds_spike
       - name: Clippy
         run: cargo clippy --release --locked --all-targets -- -D warnings
+      - name: Setup script on a fresh checkout (macOS)
+        # No settings exist yet, so the expected result is exit 1 with doctor's "does not exist yet".
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set +e; sh scripts/setup.sh > setup.log 2>&1; code=$?; set -e
+          cat setup.log
+          [ "$code" = 1 ] && grep -q "does not exist yet" setup.log
+      - name: Setup script on a fresh checkout (Windows PowerShell)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\setup.ps1 *> setup.log
+          $code = $LASTEXITCODE
+          Get-Content setup.log
+          if ($code -ne 1 -or -not (Select-String -Path setup.log -Pattern 'does not exist yet' -Quiet)) { Write-Error "unexpected setup result: exit $code"; exit 1 }
+          exit 0
+
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
