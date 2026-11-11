@@ -1033,13 +1033,13 @@ pub fn apply_plan(p: &PlanCtx) -> Result<String, String> {
             if loaded { step(&mut o, "a resident from this project is already installed: install.sh refuses to run over it", vec![
                 format!("dry run:  sh {}", sh.quote(&uninstall)), format!("remove:   sh {} --apply   # stops kfm-mac (route 0, keys released), removes the LaunchAgents; files and logs stay", sh.quote(&uninstall)),
                 "kfmctl.sh only has pause / resume / status: it cannot restart or reload settings, so changed settings need uninstall then install".into(),
-                format!("rollback: reinstall with the previous settings (`kfm-config restore --list`), then the install step below")]); }
+                "rollback: reinstall with the previous settings (`kfm-config restore --list`), then the install step below".into()]); }
             let sourced = format!("( set -a; . {}; set +a; sh {} {{}} )", sh.quote(&cfg), sh.quote(&install));
             step(&mut o, "install the resident (two LaunchAgents, installed copies under ~/Library/Application Support/keyboard-follows-mouse)", vec![
                 format!("dry run:  {}", sourced.replace(" {}", "")), format!("install:  {}", sourced.replace("{}", "--apply")),
                 format!("rollback: sh {} (dry run), then sh {} --apply", sh.quote(&uninstall), sh.quote(&uninstall)),
                 "install.sh stops by itself if the key is unreadable, the Karabiner rule is missing, or something is already running".into()]);
-            step(&mut o, "check, pause or resume (nothing restarts; kfmctl has no restart)", vec![format!("sh \"$HOME/Library/Application Support/keyboard-follows-mouse/bin/kfmctl.sh\" status|pause|resume")]);
+            step(&mut o, "check, pause or resume (nothing restarts; kfmctl has no restart)", vec!["sh \"$HOME/Library/Application Support/keyboard-follows-mouse/bin/kfmctl.sh\" status|pause|resume".into()]);
             if matches!(p.rule, RuleState::HotkeyDiffers { .. } | RuleState::NotInstalled | RuleState::Unknown) { o.push("\nOrder matters: the Karabiner rule step must be done BEFORE the install step, even before its dry run: install.sh checks that the kfm rule is installed first and matches the hotkey, and stops otherwise.".into()); }
         }
         Role::Receiver | Role::WindowsSource => {
