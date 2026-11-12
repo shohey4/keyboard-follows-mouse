@@ -23,7 +23,7 @@ access.
 
 ## What the protocol does
 
-- **Pre-shared key.** 32 random bytes. `kfm-mac keygen` writes the key file
+- **Pre-shared key.** 32 random bytes. `kfm-config keygen` (or `kfm-mac keygen` on a Mac) writes the key file
   with mode `0600`, and both binaries refuse a key file that is readable by
   others on Unix. On Windows the ACL is **not checked** (a warning is
   printed); protect the file yourself.
@@ -55,7 +55,7 @@ access.
   crashes). Held-key snapshots in every datagram keep both sides
   consistent despite loss.
 - **Fail-safe routing (Mac).** The route moves to Windows only after the link
-  is confirmed. F13 returns to the Mac inside Karabiner even if `kfm-mac` is
+  is confirmed. The hotkey (F13 by default) returns to the Mac inside Karabiner even if `kfm-mac` is
   dead, and the guard LaunchAgent resets the route when `kfm-mac` is not
   running.
 - **Secure Input.** While macOS Secure Input is on, the route is not moved to
@@ -66,7 +66,7 @@ access.
 ## Known limits
 
 - No forward secrecy: anyone who later obtains the key can decrypt recorded
-  traffic. Rotate the key (`kfm-mac keygen`, reinstall on both sides) if a
+  traffic. Rotate the key (`kfm-config keygen`, reinstall on both sides) if a
   machine or the key file may have been exposed.
 - Denial of service: an attacker on the LAN can drop traffic or flood the UDP
   port. The link then goes down and the keyboard returns to the Mac; typing in
@@ -78,13 +78,32 @@ access.
   the route is on Windows. This is the same trust level as any local input
   method.
 - `SendInput` cannot type into elevated windows from a non-elevated
-  `kfm-win`, and some applications ignore injected input.
+  `kfm-receive`, and some applications ignore injected input.
+- On a macOS receiver, `kfm-receive --enable-inject` needs the Accessibility
+  permission. macOS grants it to the app that started the process: when you
+  run it from a terminal, the terminal needs it, and then every program run
+  from that terminal can post input. Prefer starting it from launchd so the
+  grant belongs to the binary alone.
+- On a macOS receiver it is **not verified** whether injected keys are kept
+  out of password fields or the lock screen; assume keys you type can arrive
+  there, and do not leave a receiving Mac locked with the link up.
+- An invalid keymap or layout setting stops the binaries before they listen
+  (fail closed); a valid but unwanted remap is applied as written.
 - Sleep, Wi-Fi roaming and address changes break the link; there is no
   discovery or re-pairing.
+- `kfm-send --experimental-capture-all-keyboards` (Windows source) installs a
+  system-wide low-level keyboard hook while it forwards. During that time it
+  sees and suppresses **every** keyboard on the PC, and anything typed goes to
+  the Mac, including passwords (Windows has no counterpart of Secure Input).
+  It records nothing, and the hook is removed when forwarding ends, but treat
+  it like any program that holds a keyboard hook. It has not run on Windows
+  yet.
 
 ## Things you should not do
 
 - Do not expose the UDP ports to the internet or to untrusted networks.
 - Do not commit or share the key file; do not paste it into chat or email.
-- Do not run `kfm-win` with `--enable-inject` as an administrator unless you
+- Do not leave `kfm-send` forwarding unattended, and do not run it as an
+  administrator.
+- Do not run `kfm-receive` with `--enable-inject` as an administrator unless you
   understand that remote keystrokes then reach elevated windows.

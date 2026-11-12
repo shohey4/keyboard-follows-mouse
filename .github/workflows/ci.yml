@@ -23,10 +23,40 @@ jobs:
       - name: Test
         # tests/uds_spike.rs asserts latency bounds that shared runners may miss;
         # it runs below as informational only. The e2e tests are Unix-only.
-        run: cargo test --release --locked --lib --bins --test e2e_binaries_udp --test e2e_synthetic
+        run: cargo test --release --locked --lib --bins --test e2e_binaries_udp --test e2e_synthetic --test kfm_config_cli
       - name: Latency spike (informational)
         if: runner.os != 'Windows'
         continue-on-error: true
         run: cargo test --release --locked --test uds_spike
       - name: Clippy
         run: cargo clippy --release --locked --all-targets -- -D warnings
+      - name: Setup script on a fresh checkout (macOS)
+        # No settings exist yet, so the expected result is exit 1 with doctor's "does not exist yet".
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set +e; sh scripts/setup.sh > setup.log 2>&1; code=$?; set -e
+          cat setup.log
+          [ "$code" = 1 ] && grep -q "does not exist yet" setup.log
+      - name: Setup script on a fresh checkout (Windows PowerShell)
+        if: runner.os == 'Windows'
+        shell: powershell
+        # Actions runs this step with $ErrorActionPreference = 'Stop', which turns cargo's normal stderr
+        # progress into a terminating error; a user's shell does not, so relax it for this check only.
+        run: |
+          $ErrorActionPreference = 'Continue'
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\setup.ps1 *> setup.log
+          $code = $LASTEXITCODE
+          Get-Content setup.log
+          if ($code -ne 1 -or -not (Select-String -Path setup.log -Pattern 'does not exist yet' -Quiet)) { Write-Error "unexpected setup result: exit $code"; exit 1 }
+          exit 0
+
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

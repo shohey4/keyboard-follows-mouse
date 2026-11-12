@@ -48,7 +48,7 @@ const MAC_TO_HID: &[(u16, u16)] = &[
     (0x38, 0xE1), (0x39, 0x39), (0x3A, 0xE2), (0x3B, 0xE0), (0x3C, 0xE5), (0x3D, 0xE6),
     (0x3E, 0xE4), (0x60, 0x3E), (0x61, 0x3F), (0x62, 0x40), (0x63, 0x3C), (0x64, 0x41),
     (0x65, 0x42), (0x66, 0x91), (0x67, 0x44), (0x68, 0x90), (0x6D, 0x43), (0x6F, 0x45),
-    (0x73, 0x4A), (0x74, 0x4B), (0x75, 0x4C), (0x76, 0x3D), (0x77, 0x4D), (0x78, 0x3B),
+    (0x72, 0x49), (0x73, 0x4A), (0x74, 0x4B), (0x75, 0x4C), (0x76, 0x3D), (0x77, 0x4D), (0x78, 0x3B),
     (0x79, 0x4E), (0x7A, 0x3A), (0x7B, 0x50), (0x7C, 0x4F), (0x7D, 0x51), (0x7E, 0x52),
 ];
 
@@ -121,6 +121,22 @@ const HID_TO_WIN: &[(u16, u8, bool)] = &[
     (0xE4, 0x1D, true), (0xE5, 0x36, false), (0xE6, 0x38, true), (0xE7, 0x5C, true),
 ];
 
+/// The usage a wire key stands for (inverse of `win_key_for_usage`). A receiver
+/// that is not Windows uses it to turn the wire key back into a physical key.
+pub fn usage_for_win_key(k: WinKey) -> Option<Usage> {
+    match k {
+        WinKey::Vk(VK_IME_ON) => Some(hid::LANG1),
+        WinKey::Vk(VK_IME_OFF) => Some(hid::LANG2),
+        WinKey::Vk(_) => None,
+        WinKey::Scan { code, extended } => HID_TO_WIN.iter().find(|(_, c, e)| *c == code && *e == extended).map(|(h, ..)| Usage(*h)),
+    }
+}
+
+/// HID usage -> macOS virtual keycode (inverse of `usage_from_mac_keycode`).
+pub fn mac_keycode_for_usage(u: Usage) -> Option<u16> {
+    MAC_TO_HID.iter().find(|(_, h)| *h == u.0).map(|(k, _)| *k)
+}
+
 pub fn win_key_for_usage(u: Usage) -> Option<WinKey> {
     if u == hid::LANG1 { return Some(WinKey::Vk(VK_IME_ON)); }
     if u == hid::LANG2 { return Some(WinKey::Vk(VK_IME_OFF)); }
@@ -154,6 +170,18 @@ mod tests {
         assert_eq!(win_key_for_usage(hid::C), Some(WinKey::Scan { code: 0x2E, extended: false }));
         assert_eq!(win_key_for_usage(hid::RCTRL), Some(WinKey::Scan { code: 0x1D, extended: true }));
         assert_eq!(win_key_for_usage(hid::LANG1), Some(WinKey::Vk(VK_IME_ON)));
+    }
+
+    #[test]
+    fn every_wire_key_maps_back_to_its_usage_and_to_a_mac_keycode() {
+        for (h, ..) in HID_TO_WIN {
+            let u = Usage(*h);
+            assert_eq!(usage_for_win_key(win_key_for_usage(u).unwrap()), Some(u), "{h:#x}");
+            assert!(mac_keycode_for_usage(u).is_some(), "hid {h:#x} has no macOS keycode");
+        }
+        for u in [hid::LANG1, hid::LANG2] { assert_eq!(usage_for_win_key(win_key_for_usage(u).unwrap()), Some(u)); }
+        assert_eq!(usage_for_win_key(WinKey::Vk(0x41)), None, "unknown virtual keys are not guessed");
+        assert_eq!(mac_keycode_for_usage(hid::C), Some(0x08));
     }
 
     #[test]

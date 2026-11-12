@@ -53,7 +53,8 @@ mod unix {
     extern "C" fn on_signal(_: libc::c_int) { STOP.store(true, Ordering::SeqCst); }
 
     fn recovery() -> String {
-        format!("RECOVERY: if the keyboard stops typing on the Mac, press F13 on it, or run:\n  '{KARABINER_CLI}' --set-variables '{{\"kfm_route\":0}}'")
+        let hotkey = keyboard_follows_mouse::remap::key_config().hotkey.to_uppercase();
+        format!("RECOVERY: if the keyboard stops typing on the Mac, press {hotkey} on it, or run:\n  '{KARABINER_CLI}' --set-variables '{{\"kfm_route\":0}}'")
     }
 
     fn arg(args: &[String], name: &str) -> Option<String> {
@@ -539,7 +540,15 @@ mod unix {
         if follow { println!("rule E: {}", if easy_switch { "FOLLOWING the MX4 (Windows device list: arrives -> Windows, leaves -> Mac; Easy-Switch and Flow)" } else { "off (--no-easy-switch)" }); }
         let mut mx4_seen = [0u64; 2];
         let start = Instant::now();
-        let mut bridge = Bridge::new(Router::new(win_profile(args)?, Hotkey::default()), Typematic::default());
+        // The receiver's OS decides which user remaps apply; a Mac receiver gets the
+        // keys as Karabiner reports them (the source Mac's swaps are kept).
+        let target = keyboard_follows_mouse::remap::TargetOs::parse(&arg(args, "--target-os").unwrap_or_else(|| "windows".into()))?;
+        let keys = keyboard_follows_mouse::remap::key_config();
+        let base = match target { keyboard_follows_mouse::remap::TargetOs::Windows => win_profile(args)?, keyboard_follows_mouse::remap::TargetOs::Mac => WindowsProfile::identity() };
+        let remaps = keys.remaps(target);
+        println!("target OS: {target:?}; hotkey: {}; user remaps for it: {}", keys.hotkey, remaps.len());
+        let hotkey = Hotkey { key: keys.hotkey_router_usage(), modifiers: vec![] };
+        let mut bridge = Bridge::new(Router::new(base.with_user(remaps), hotkey), Typematic::default());
         let (mut events, mut rejected, mut dropped) = (0u64, 0u64, 0u64);
         let mut buf = [0u8; 512];
         // Link diagnosis: the longest pause between loop turns (over ~2 s) and the last karabiner_cli run.
@@ -722,6 +731,7 @@ mod unix {
 
     pub fn main() -> ExitCode {
         if let Err(e) = keyboard_follows_mouse::karabiner::keyboard_from_env() { eprintln!("kfm-mac: {e}"); return ExitCode::FAILURE; }
+        if let Err(e) = keyboard_follows_mouse::remap::key_config_from_env() { eprintln!("kfm-mac: {e}"); return ExitCode::FAILURE; }
         let args: Vec<String> = std::env::args().skip(1).collect();
         let res = match args.first().map(String::as_str) {
             Some("keygen") => arg(&args, "--out").ok_or("--out PATH is required".to_string())

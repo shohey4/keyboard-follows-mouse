@@ -7,3 +7,6 @@ config.sh
 .env
 .env.*
 .DS_Store
+
+# Local settings made by kfm-config (addresses, keymap, backups); never committed.
+/local/

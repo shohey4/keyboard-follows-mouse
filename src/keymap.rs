@@ -21,9 +21,14 @@ pub enum Action {
     Drop,
 }
 
+/// How physical keys reach one target. The same wire key (a Windows set-1
+/// scan code) serves every target OS; a Mac receiver turns it back into the
+/// physical key. `overrides` act on the key as Karabiner reports it (undoing
+/// its swaps); `user` then remaps the physical key (`remap::KeyConfig`).
 #[derive(Clone, Debug, Default)]
 pub struct WindowsProfile {
     overrides: HashMap<Usage, Action>,
+    user: HashMap<Usage, Action>,
 }
 
 impl WindowsProfile {
@@ -50,8 +55,17 @@ impl WindowsProfile {
 
     pub fn set(&mut self, physical: Usage, action: Action) { self.overrides.insert(physical, action); }
 
+    /// Adds the user's remaps of physical keys (applied after `overrides`).
+    pub fn with_user(mut self, remaps: &[(Usage, Action)]) -> Self {
+        self.user = remaps.iter().copied().collect();
+        self
+    }
+
     pub fn action(&self, physical: Usage) -> Action {
-        self.overrides.get(&physical).copied().unwrap_or(Action::Key(physical))
+        match self.overrides.get(&physical).copied().unwrap_or(Action::Key(physical)) {
+            Action::Key(u) => self.user.get(&u).copied().unwrap_or(Action::Key(u)),
+            other => other,
+        }
     }
 
     /// None = no Windows equivalent (dropped, never guessed).
@@ -76,6 +90,20 @@ mod tests {
         assert_eq!(p.resolve(hid::RGUI), win_key_for_usage(hid::RCTRL));
         assert_eq!(p.resolve(hid::LCTRL), win_key_for_usage(hid::LGUI));
         assert_eq!(p.resolve(hid::C), win_key_for_usage(hid::C));
+    }
+
+    #[test]
+    fn user_remaps_apply_to_the_physical_key_after_undoing_swaps() {
+        // Karabiner reports physical Cmd as left_control; the user wants Caps Lock as Ctrl
+        // and physical Cmd dropped on this target.
+        let p = WindowsProfile::undo_swaps(&[(hid::LCTRL, hid::LGUI)]).with_user(&[(Usage(0x39), Action::Key(hid::LCTRL)), (hid::LGUI, Action::Drop)]);
+        assert_eq!(p.resolve(Usage(0x39)), win_key_for_usage(hid::LCTRL));
+        assert_eq!(p.resolve(hid::LCTRL), None, "reported left_control = physical Cmd = dropped");
+        assert_eq!(p.resolve(hid::C), win_key_for_usage(hid::C));
+        // Removing the remaps restores the original mapping.
+        let back = WindowsProfile::undo_swaps(&[(hid::LCTRL, hid::LGUI)]).with_user(&[]);
+        assert_eq!(back.resolve(Usage(0x39)), win_key_for_usage(Usage(0x39)));
+        assert_eq!(back.resolve(hid::LCTRL), win_key_for_usage(hid::LGUI));
     }
 
     #[test]
